@@ -46,7 +46,7 @@ HOMEWORK_VERDICTS = {
 
 
 def check_tokens():
-    '''Проверяет переменные.'''
+    """Проверяет переменные."""
     if (TELEGRAM_TOKEN is None or PRACTICUM_TOKEN is None
             or TELEGRAM_CHAT_ID is None):
         return False
@@ -54,7 +54,7 @@ def check_tokens():
 
 
 def send_message(bot, message):
-    '''Отправляет сообщения в телеграм.'''
+    """Отправляет сообщения в телеграм."""
     try:
         bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
         logger.debug("Отправили сообщение через бота")
@@ -63,7 +63,7 @@ def send_message(bot, message):
 
 
 def get_api_answer(current_timestamp):
-    '''Возвращает ответ API.'''
+    """Возвращает ответ API."""
     timestamp = current_timestamp or int(time.time())
     params = {'from_date': timestamp}
     try:
@@ -82,7 +82,7 @@ def get_api_answer(current_timestamp):
 
 
 def check_response(response):
-    '''Проверяет ответ API.'''
+    """Проверяет ответ API."""
     if not isinstance(response, dict):
         raise TypeError('Ответ вернул не словарь')
     if 'homeworks' not in response:
@@ -94,7 +94,7 @@ def check_response(response):
 
 
 def parse_status(homework):
-    '''Проверяет статус работы.'''
+    """Проверяет статус работы."""
     homework_name = homework.get('homework_name')
     homework_status = homework.get('status')
     if 'homework_name' not in homework:
