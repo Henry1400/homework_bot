@@ -1,5 +1,3 @@
-# Не могу понять, почему не запускается бот, хотя тесты прошел.
-# Подскажи, пожалуйста, что я неправильно делаю
 import logging
 import os
 import requests
@@ -77,21 +75,28 @@ def get_api_answer(current_timestamp):
         logger.error(f'Ошибка при запросе к основному API: {error}')
         raise Exception(f'Ошибка при запросе к основному API: {error}')
     if homework_statuses.status_code != HTTPStatus.OK:
-        status_code = homework_statuses.status_code
-        logger.error(f'Ошибка {status_code}')
-        raise Exception(f'Ошибка {status_code}')
-    return homework_statuses.json()
+        logger.error('Не удалось установить соединение с API-сервисом ')
+        raise Exception('Не удалось установить соединение с API-сервисом ')
+    try:
+        homework_statuses = homework_statuses.json()
+    except Exception as error:
+        logger.error(f'Ошибка при обработке json-файла: {error}')
+        raise Exception(f'Ошибка при обработке json-файла: {error}')
+    return homework_statuses
 
 
 def check_response(response):
     """Проверяет ответ API."""
     if not isinstance(response, dict):
+        logger.error('Ответ вернул не словарь')
         raise TypeError('Ответ вернул не словарь')
-    if 'homeworks' not in response:
-        raise KeyError('Ключа homework отсутсвует')
     homeworks = response.get('homeworks')
-    if type(homeworks) is not list:
-        raise TypeError('Ответ вернулся не ввиде списка')
+    if homeworks is None:
+        logger.error('Ключ homework отсутсвует')
+        raise KeyError('Ключ homework отсутсвует')
+    if not isinstance(homeworks, list):
+        logger.error('Ответ вернулся не в виде списка')
+        raise TypeError('Ответ вернулся не в виде списка')
     return homeworks
 
 
@@ -118,23 +123,40 @@ def main():
         return None
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
     current_timestamp = int(time.time())
-    previous_message = ''
+    last_information = {
+        'message_name': '',
+        'output_text': ''
+    }
+    information = {
+        'message_name': '',
+        'output_text': ''
+    }
     while True:
         try:
             response = get_api_answer(current_timestamp)
+            current_timestamp = response['current_date']
             homeworks = check_response(response)
-            for homework in homeworks:
-                message = parse_status(homework)
-                send_message(bot, message)
+            if homeworks:
+                status = parse_status(homeworks[0])
+                information['message_name'] = status
+                information['output_text'] = status
             else:
-                logger.info('Статус не изменился')
-            current_timestamp = response.get('current_date', current_timestamp)
+                message = 'Статус работы не изменился'
+                logger.debug(message)
+                information['output_text'] = message
+            if information != last_information:
+                send_message(bot, information['output_text'])
+                last_information = information.copy()
+            else:
+                logger.debug(
+                    'Статус работы не изменился, сообщение не отправлено'
+                )
         except Exception as error:
             message = f'Сбой в работе программы: {error}'
             logger.error(message)
-            if message != previous_message:
-                send_message(bot, message)
-                previous_message = message
+            if information != last_information:
+                send_message(bot, information)
+                last_information = information.copy()
         finally:
             time.sleep(RETRY_PERIOD)
 
