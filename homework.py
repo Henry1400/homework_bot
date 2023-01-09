@@ -2,19 +2,17 @@ import logging
 import os
 import requests
 import time
+import sys
 from http import HTTPStatus
 from logging.handlers import RotatingFileHandler
 from dotenv import load_dotenv
 import telegram
 
+import exceptions
+
 
 load_dotenv()
-logging.basicConfig(
-    level=logging.DEBUG,
-    filename='main.log',
-    format='%(asctime)s, %(funcName)s, %(levelname)s, %(message)s',
-    filemode='w'
-)
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 handler = RotatingFileHandler(
@@ -47,36 +45,46 @@ HOMEWORK_VERDICTS = {
 
 def check_tokens():
     """Проверяет переменные."""
-    if (TELEGRAM_TOKEN is None or PRACTICUM_TOKEN is None
-            or TELEGRAM_CHAT_ID is None):
-        return False
-    return True
+    return all((TELEGRAM_TOKEN, PRACTICUM_TOKEN, TELEGRAM_CHAT_ID))
 
 
 def send_message(bot, message):
     """Отправляет сообщения в телеграм."""
+    logger.info('Начали отправку сообщения')
     try:
         bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
         logger.debug("Отправили сообщение через бота")
-    except Exception:
-        logger.error('Сообщение не отправилось')
+    except telegram.TelegramError as error:
+        message = f'Сообщение не отправилось из-за ошибки: {error}'
+        logger.error(message)
+        raise exceptions.SendMessageError(message)
 
 
 def get_api_answer(current_timestamp):
     """Возвращает ответ API."""
     timestamp = current_timestamp or int(time.time())
-    params = {'from_date': timestamp}
+    arguments = {
+        'url': ENDPOINT,
+        'headers': HEADERS,
+        'params': {'from_date': timestamp},
+    }
     try:
-        homework_statuses = requests.get(ENDPOINT,
-                                         headers=HEADERS,
-                                         params=params
-                                         )
+        logger.info('Получаем ответ API с параметрами: Arguments: {arguments}')
+        homework_statuses = requests.get(**arguments)
+        # По поводу 'И сам запрос также поместить в try except,
+        # на случай ошибки соединения или неверного урла.'
+        # Нужно homework_statuses.status_code != HTTPStatus.OK
+        # переместить под сам запрос?
     except Exception as error:
         logger.error(f'Ошибка при запросе к основному API: {error}')
         raise Exception(f'Ошибка при запросе к основному API: {error}')
     if homework_statuses.status_code != HTTPStatus.OK:
-        logger.error('Не удалось установить соединение с API-сервисом ')
-        raise Exception('Не удалось установить соединение с API-сервисом ')
+        raise exceptions.WrongHTTPStatus(
+            'Не удалось установить соединение с API-сервисом',
+            homework_statuses.status_code,
+            homework_statuses.headers,
+            homework_statuses.url
+        )
     try:
         homework_statuses = homework_statuses.json()
     except Exception as error:
@@ -104,8 +112,8 @@ def parse_status(homework):
     """Проверяет статус работы."""
     homework_name = homework.get('homework_name')
     homework_status = homework.get('status')
-    if 'homework_name' not in homework:
-        raise KeyError('Ключ homework_name отсутсвует')
+    if not homework_name:
+        raise KeyError('Ключ homework_name отсутсвует в {homework}')
     if homework_status not in HOMEWORK_VERDICTS:
         raise KeyError(f'Статус {homework_status} неизвестен')
     verdict = HOMEWORK_VERDICTS[homework_status]
@@ -117,10 +125,10 @@ def main():
     if check_tokens() is False:
         error_messages = (
             'Переменные отсутствуют'
-            'Бот остановле.'
+            'Бот остановлен'
         )
         logger.critical(error_messages)
-        return None
+        sys.exit()
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
     current_timestamp = int(time.time())
     last_information = {
@@ -138,15 +146,17 @@ def main():
             homeworks = check_response(response)
             if homeworks:
                 status = parse_status(homeworks[0])
-                information['message_name'] = status
-                information['output_text'] = status
+                information = status
             else:
                 message = 'Статус работы не изменился'
                 logger.debug(message)
                 information['output_text'] = message
             if information != last_information:
-                send_message(bot, information['output_text'])
-                last_information = information.copy()
+                try:
+                    send_message(bot, information['output_text'])
+                    last_information = information.copy()
+                except exceptions.SendMessageError as error:
+                    logger.error(error)
             else:
                 logger.debug(
                     'Статус работы не изменился, сообщение не отправлено'
@@ -158,8 +168,15 @@ def main():
                 send_message(bot, information)
                 last_information = information.copy()
         finally:
+            logger.info('Спящий режим.')
             time.sleep(RETRY_PERIOD)
 
 
 if __name__ == '__main__':
+    logging.basicConfig(
+        level=logging.DEBUG,
+        filename='main.log',
+        format='%(asctime)s, %(funcName)s, %(levelname)s, %(message)s',
+        filemode='w'
+    )
     main()
